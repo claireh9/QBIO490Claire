@@ -1,0 +1,149 @@
+---
+title: "Introduction to MAF Claire He"
+author: Mahija Mogalipuvvu, adapted from Nicole Black, Wade Boohar
+date: 07/17/22
+updated: 10/3/24
+---
+
+***Deliverables***
+- upload this R Notebook to your GitHub and submit the link to your Repo on Brightspace
+- include ALL graphs or figures created in this assignment in a folder with your R notebook with descriptive file names.
+
+We encourage you to work with a partner. Therefore, it is okay if your answers are the same as your partner’s as long as everyone understands it and could explain it in their own words if asked. Each person must individually push their code to Github. *At the top of your R Notebook, write the name of you and your partner(s) as a comment.*
+
+***Complete the following coding activity and answer any following questions as comments in your R Notebook***
+
+In this assignment, you will need to use your skills learned in class to demonstrate your understanding of categorical variables and R data structures.
+
+*Pre-Assignment*
+Load all necessary packages, read in the clinical data.csv file you have in your analysis_data folder, and instantiate the MAF_object.
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("/home1/heclaire/490_cluster/analysis_data")) 
+
+```
+
+
+```{r}
+library(ggplot2)
+```
+
+```{r}
+clinic <- read.csv("/home1/heclaire/490_cluster/analysis_data/brca_clinical_data.csv")
+colnames(clinic)[ colnames(clinic) == "bcr_patient_barcode" ] <-
+"Tumor_Sample_Barcode"
+maf_query <- GDCquery(
+project = "TCGA-BRCA",
+data.category = "Simple Nucleotide Variation",
+access = "open",
+data.type = "Masked Somatic Mutation",
+workflow.type = "Aliquot Ensemble Somatic Variant Merging and Masking"
+)
+#GDCdownload(maf_query)
+maf <- GDCprepare(maf_query)
+maf_object <- read.maf(maf = maf,
+clinicalData = clinic,
+isTCGA = TRUE)
+```
+
+*1*
+Choose a clinical variable (or any variable from clin_rad or clin_drug) to separate your populations into two different groups and rewrite the column or create a new column with that variable as a factor. ***Do not use age or vital_status as your clinical variable.*** Hint: if your variable is continuous, you will need to determine your own cutoffs for the different levels of the factor. If your variable is categorical and has more than two possible values, choose the two that are the most common.
+
+```{r}
+maf_object@clinical.data$tumor_status<-factor(maf_object@clinical.data$tumor_status,levels = c("WITH TUMOR","TUMOR FREE"))
+no_na_mask<-!is.na(maf_object@clinical.data$tumor_status)
+
+clean_maf_object<-maf_object@clinical.data[no_na_mask,]
+
+yes_sample<-clean_maf_object$Tumor_Sample_Barcode[clean_maf_object$tumor_status == "WITH TUMOR"]
+no_sample<-clean_maf_object$Tumor_Sample_Barcode[clean_maf_object$tumor_status == "TUMOR FREE"]
+
+with_tumor_maf<-subsetMaf(maf = maf_object, tsb = yes_sample)
+tumor_free_maf <- subsetMaf(maf = maf_object, tsb = no_sample)
+
+
+```
+
+
+*2*
+Create a co-oncoplot with the top 10-20 (you choose) most mutated genes for the two groups. Pick one that has a large discrepancy in % mutated or type of mutations between the groups and research it. 
+Research it. What is the gene used for? Can you think of any reason for the discrepancy?
+```{r}
+
+png("plot.png", width = 2000, height = 1000)
+coOncoplot(m1 = with_tumor_maf,
+m2 =tumor_free_maf,
+m1Name ="With Tumor",
+m2Name = "Tumor Free", 
+borderCol = NA)
+
+dev.off()
+#ggsave("home1/heclaire/490_cluster/week6_MAF/co-Oncoplot.png", plot = p, width = 1000, height = 1000, dpi = 1000)
+
+
+```
+
+The gene that has the largest discrepancy in % mutated is PIK3CA. The PIK3CA gene produces the p110 alpha (p110α) protein, which is part of the phosphatidylinositol 3-kinase (PI3K) enzyme. PI3K adds a phosphate group to other proteins, which triggers chemical signals within cells. These signals regulate cell growth, division, movement, protein production, and cell survival. Mutations in the PIK3CA gene may cause the PI3K enzyme to become overactive, which may cause cancer cells to grow, explaining how 35% of tumor free patients have missense mutations while only 27% of the with tumor patients have missense mutation in this gene. It is possible that tumor free patients might posses less aggressive missense mutations in PIK3CA that don't drive malignant transformation.Moreover, early treatment interventions targeting the PI3K pathway could be more effective in patients with missense mutations, resulting in a higher tumor-free rate. 
+
+
+*3*
+Create a contingency table with your variable and chosen gene. Run a Fisher’s Exact Test between presence of mutations for that gene and your clinical variable. Create and save a mosaic plot. 
+Interpret the output of the Fisher’s Exact Test in terms of the odds ratio and p-value.
+```{r}
+maf_object@clinical.data <- maf_object@clinical.data[no_na_mask, ]
+
+maf_object@clinical.data$tumor_free<-maf_object@clinical.data$tumor_status=="TUMOR FREE"
+pik3ca_mutation_samples <- maf_object@data$Tumor_Sample_Barcode[maf_object@data$Hugo_Symbol == "PIK3CA"]
+maf_object@clinical.data$mutation <- maf_object@clinical.data$Tumor_Sample_Barcode %in% pik3ca_mutation_samples
+
+contingency_table <-table(maf_object@clinical.data$tumor_free, maf_object@clinical.data$mutation)
+
+contingency_table
+
+mosaicplot(contingency_table)
+
+fisher.test(contingency_table)
+
+```
+The p value of 0.1432 is much greater than the common significance threshold of 0.05, therefore, failing to reject the null hypothesis.
+There is no statistically significant association between having a tumor and mutations in the PIK3CA gene at the 5% significance level. Moreover, the odds ratio of 1.469008 indicates that tumor free individuals are 1.47 times more likely to have mutations in the PIK3CA gene compared to those individuals with tumor.
+
+*4*
+Subset your maf_object based on your chosen clinical variable and create a co-lollipop plot of your chosen gene divided between the two different clinical variable possibilities. Include descriptive names on your plot.
+Do you notice any difference in terms of mutations (e.g. sites, types, number) between the two populations?
+```{r}
+#png("colollipop.png")
+lollipopPlot2(m1 = with_tumor_maf,
+m2 =tumor_free_maf,
+m1_name = "With Tumor",
+m2_name = "Tumor Free",
+gene ="PIK3CA")
+
+
+ggsave("/home1/heclaire/490_cluster/week6_MAF/colollipop.png")
+
+```
+Missense mutations are found in both groups but appear more frequently in tumor-free individuals. In-frame deletions are only observed in tumor-free groups but seem to be much rarer compared with missense mutations. Interestingly, tumor-free individuals have much more missense mutations at all of the sites except PI3K_rbd compared with individuals with tumors. 
+
+
+
+*5*
+Create your Overall_Survival_Status column and create a mafSurvival KM plot based on mutations in your chosen gene.
+Does there seem to be a difference? Hypothesize why or not based on the other analysis you did with the gene above.
+```{r}
+maf_object@clinical.data <- maf_object@clinical.data[no_na_mask, ]
+
+maf_object@clinical.data$overall_survival_time<-ifelse(maf_object@clinical.data$vital_status=="Alive",as.numeric(maf_object@clinical.data$last_contact_days_to),as.numeric(maf_object@clinical.data$death_days_to))
+
+maf_object@clinical.data$overall_survival_status<- ifelse(maf_object@clinical.data$vital_status=="Dead",TRUE,FALSE)
+
+#ng("mafSurvialplot.png")
+mafSurvival(maf= maf_object,
+genes= "PIK3CA",
+time = "overall_survival_time",
+Status = "overall_survival_status",
+isTCGA = TRUE)
+
+ggsave("/home1/heclaire/490_cluster/week6_MAF/mafSurvialplot.png")
+
+```
+The KM survival plots comparing individuals with PIK3CA mutations to those without shows no significant difference in overall survival probability, as indicated by the large p-value of 0.586. This suggests that the presence of mutations in the PIK3CA gene does not significantly influence survival outcomes. Interestingly, earlier analyses showed a higher frequency of missense mutations in tumor-free individuals, indicating that these mutations may be less harmful or occur in less critical regions of the gene. Additionally, other factors such as differences in treatment response might explain the lack of significant impact on survival outcomes despite the presence of mutations. 
