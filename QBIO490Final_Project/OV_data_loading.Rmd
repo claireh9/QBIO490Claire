@@ -1,0 +1,74 @@
+---
+title: "OV Data Loading"
+output: html_notebook
+---
+
+```{r setup}
+knitr::opts_knit$set(root.dir = normalizePath("/home1/heclaire/490_cluster/OV_data"))
+```
+
+## R Markdown
+
+
+```{r}
+if (!require("knitr", quietly = TRUE))
+install.packages("knitr")
+if (!require("BiocManager", quietly = TRUE))
+install.packages("BiocManager")
+BiocManager::install(version = "3.19")
+if (!require("TCGAbiolinks", quietly = TRUE))
+BiocManager::install("TCGAbiolinks")
+if (!require("maftools", quietly = TRUE))
+  BiocManager::install("maftools")
+library(BiocManager)
+library(TCGAbiolinks)
+library(maftools)
+```
+
+```{r}
+clin_query <- GDCquery(project = "TCGA-OV",
+data.category = "Clinical",
+data.type = "Clinical Supplement",
+data.format = 'BCR Biotab')
+#GDCdownload(clin_query)
+clinical.BCRtab.all <- GDCprepare(clin_query)
+clinic <- clinical.BCRtab.all$clinical_patient_ov[-c(1,2),]
+```
+
+```{r}
+colnames(clinic)[ colnames(clinic) == "bcr_patient_barcode" ] <-
+"Tumor_Sample_Barcode"
+maf_query <- GDCquery(
+project = "TCGA-OV",
+data.category = "Simple Nucleotide Variation",
+access = "open",
+data.type = "Masked Somatic Mutation",
+workflow.type = "Aliquot Ensemble Somatic Variant Merging and Masking"
+)
+#GDCdownload(maf_query)
+maf <- GDCprepare(maf_query)
+maf_object <- read.maf(maf = maf,
+clinicalData = clinic,
+isTCGA = TRUE)
+```
+
+
+
+```{r}
+rna_query <- GDCquery(project ="TCGA-OV",
+data.category = "Transcriptome Profiling",
+data.type = "Gene Expression Quantification",
+workflow.type = "STAR - Counts")
+GDCdownload(rna_query)
+rna_se <- GDCprepare(rna_query)
+```
+
+
+```{r}
+unique(clinic$tumor_grade)
+sum(clinic$tumor_grade=="G1")
+```
+Tumor grade: 
+- G3: 495
+- G2: 69
+- GX: 10

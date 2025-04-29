@@ -1,0 +1,152 @@
+---
+title: "Machine Learning Demo"
+author: Jeanne Revilla and Erika Li
+date: 04/02/2025
+---
+
+#Supervised Learning: KNN
+```{r}
+rna_query <- GDCquery(project ="TCGA-BRCA",
+                      data.category = "Transcriptome Profiling",
+                      data.type = "Gene Expression Quantification",
+                      workflow.type = "STAR - Counts")
+
+#GDCdownload(rna_query)
+
+rna_se <- GDCprepare(rna_query)
+
+rna_clinical <- rna_se@colData
+rna_clinical <- as.data.frame(rna_clinical)
+
+rna_genes <- rna_se@rowRanges@elementMetadata
+rna_genes <- as.data.frame(rna_genes)
+
+rna_counts <- rna_se@assays@data$unstranded
+rna_counts <- as.data.frame(rna_counts)
+
+rownames(rna_counts) <- rna_genes$gene_id
+colnames(rna_counts) <- rownames(rna_clinical)
+rownames(rna_genes) <- rna_genes$gene_id
+```
+
+We don't want to use every single gene available to train our model, that 
+would provide too much random noise! Let's make a new dataframe with only our
+genes of interest. Don't forget to clean your data!
+```{r}
+genes2 <- c("MAD1L1", "MASP2", "COL23A1", "LTBP4", "SLC13A5", "SCD5", "CA5A", "LINC01391")
+
+rna_counts_subset <- rna_counts[rna_genes$gene_name%in%genes2,]
+```
+
+In this demo, we are going to predict metastasis status.
+```{r}
+non_meta_mask <- rna_clincial$definition != "Metastatic"
+
+rna_clinical <- rna_clinical[non_meta_mask,]
+rna_counts_subset <- rna_counts_subset[,non_meta_mask]
+```
+
+We need to reformat our data so that the rows are the patients and the columns are
+gene expression levels. Use t() to transpose.
+```{r}
+rna_counts_subset <-as.data.frame(t(rna_counts_subset))
+```
+
+We also need to save our labels in a separate list.
+```{r}
+labels <- rna_clinical$definition
+```
+
+Now let's use KNN. Load the packages.
+```{r}
+install.packages("class")
+library("class")
+install.packages("caret")
+library("caret")
+```
+
+
+Let's create a train test split. 
+```{r}
+sample <- sample.int(n = nrow(rna_counts_subset), size = floor( 0.7 * nrow(rna_counts_subset)), replace = F)
+train <- rna_counts_subset[sample,]
+test  <- rna_counts_subsetp[-sample,]
+```
+
+Run the KNN analysis as below:
+```{r}
+knnres <- knn(train, test, labels[sample])
+```
+
+Let's evaluate how well it did! There are two ways to view the confusion matrix.
+```{r}
+table(knnres, labels[-sample])
+
+#more sophisticated confusion matrix
+factored_labels <- factor(labels[-sample])
+confusionMatrix(knnres, factored_labels)
+
+#average correct %
+mean(knnres == labels[-sample])
+```
+
+How can we be sure we used the optimal k value? Let's try simulations with other 
+values of k, 1-20. 
+```{r}
+error_rates <- numeric(20)
+
+for (k in 1:20) {
+  knnres <- knn(train, test, labels[sample], k=k) 
+
+  error_rate <- 1 - mean(knnres == labels[-sample])
+
+  error_rates[k] <- error_rate
+}
+
+plot(1:20, error_rates, type = "b", pch = 19, col = "blue", xlab = "Number of Neighbors (k)", ylab = "Error Rate", main = "Elbow Plot for k-NN")
+```
+
+The error rate decreases and then suddenly goes up! What is this indicative of?
+Which k should we choose?
+
+Unsupervised Learning
+
+First, let's run differential expression analysis with DESeq2
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = rna_counts, colData = rna_clinical, design = ~gender)
+dds <- DESeq(dds)
+normalized_data <- counts(dds, normalized = TRUE)
+
+# Transpose the matrix to have samples in columns and genes in rows
+expr_data <- t(normalized_data)
+expr_data_filtered <- expr_data[, apply(expr_data, 2, var) != 0]
+```
+
+```{r}
+# PCA
+pca_result <- prcomp(expr_data_filtered, scale = TRUE)
+pca_data <- as.data.frame(pca_result$x)
+
+# PCA Plot
+pca_plot <- ggplot(pca_data, aes(PC1, PC2)) +
+  geom_point(aes(color = as.factor(data$gender))) +
+  ggtitle("PCA of TCGA Data") +
+  theme_minimal()
+
+print(pca_plot)
+```
+
+UMAP
+```{r}
+# UMAP
+umap_result <- umap(expr_data_filtered)
+
+# UMAP Plot
+umap_plot <- ggplot(as.data.frame(umap_result$layout), aes(V1, V2)) +
+  geom_point(aes(color = as.factor(data$gender))) +
+  ggtitle("UMAP of TCGA Data") +
+  theme_minimal()
+
+print(umap_plot)
+```
+

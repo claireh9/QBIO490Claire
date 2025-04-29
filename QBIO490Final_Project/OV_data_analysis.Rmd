@@ -1,0 +1,647 @@
+---
+title: "QBIO490 Final Project Ovarian Cancer Claire He and Ekene Okolo"
+output: html_notebook
+---
+
+```{r setup}
+knitr::opts_knit$set(root.dir = normalizePath("/home1/heclaire/490_cluster/OV_data"))
+```
+
+#### Segmenting the patients into low grade and high grade tumor 
+```{r}
+clinic$grade_binary<-ifelse(clinic$tumor_grade=="G3","High Grade","Low Grade")
+```
+
+
+###### Kaplan-Meier Plotting
+```{r}
+library(survival)
+library(survminer)
+library(ggplot2)
+```
+
+
+# 1. Data Preprocessing
+
+
+```{r}
+clinic$survival_time <- ifelse(clinic$vital_status=="Alive",clinic$last_contact_days_to,clinic$death_days_to)
+clinic$survival_time <- as.numeric(clinic$survival_time)
+no_NA_mask <- is.na(clinic$survival_time)
+cleaned_clinic <- clinic[!no_NA_mask,]
+
+```
+
+
+Make a death event column that contains T if a patient has died, and F if the patient is alive. (Hint: cleaned_clinic$vital_status has "Alive" if a patient is alive and "Dead" if a patient passed.)
+```{r}
+cleaned_clinic$death_event <- ifelse(cleaned_clinic$vital_status=="Alive",TRUE,FALSE)
+```
+
+# 2. Create Survminer Objects
+
+Run the following code block.
+```{r}
+survival_object <- Surv(time = cleaned_clinic$survival_time,
+                        event = cleaned_clinic$death_event)
+
+fit_object <- survfit(survival_object ~ grade_binary, data = cleaned_clinic)
+```
+
+# 3. Create the KM Plot
+
+Run the following code block. The KM plot should appear in the plot tab on the right. Manually expand the tab if you get an error about the plot being too small. 
+```{r}
+png("KM_plot_for_Unmatched_Data.png")
+survplot <- ggsurvplot(fit_object,
+                       pval=TRUE,
+                       ggtheme = theme(plot.margin = unit(c(1,1,1,1), "cm")),
+                       legend = 'right')
+
+KM_plot <- survplot$plot + theme_bw() + theme(axis.title = element_text(size=20), 
+                                              axis.text = element_text(size=16),
+                                              legend.title = element_text(size=14),
+                                              legend.text = element_text(size=12))
+
+KM_plot
+```
+
+Analysis: 
+The KM plot reveals a significant difference in overall survival between the two groups (log-rank p = 0.028), with high-grade tumors associated with poorer prognosis and more rapid decline in survival probability over time. In contrast, patients with low-grade tumors demonstrated longer survival times and higher survival probabilities, supporting the hypothesis that tumor grade is prognostically relevant. 
+
+### Patient Matching 
+```{r}
+#install.packages("MatchIt")
+library(MatchIt)
+cleaned_clinic$grade_bin <- ifelse(cleaned_clinic$grade_binary == "High Grade", 1, 0)
+matched_model <- matchit(grade_bin ~ age_at_initial_pathologic_diagnosis + race + residual_tumor,
+                         data = cleaned_clinic, 
+                         method = "nearest", 
+                         ratio = 1)
+
+matched_data <- match.data(matched_model)
+```
+# KM Plot for matched data
+
+Run the following code block.
+```{r}
+survival_object <- Surv(time = matched_data$survival_time,
+                        event = matched_data$death_event)
+
+fit_object <- survfit(survival_object ~ grade_binary, data = matched_data)
+```
+
+
+Run the following code block. The KM plot should appear in the plot tab on the right. Manually expand the tab if you get an error about the plot being too small. 
+```{r}
+png("KM_plot_for_Matched_Data.png")
+survplot <- ggsurvplot(fit_object,
+                       pval=TRUE,
+                       ggtheme = theme(plot.margin = unit(c(1,1,1,1), "cm")),
+                       legend = 'right')
+
+KM_plot <- survplot$plot + theme_bw() + theme(axis.title = element_text(size=20), 
+                                              axis.text = element_text(size=16),
+                                              legend.title = element_text(size=14),
+                                              legend.text = element_text(size=12))
+
+KM_plot
+```
+Analysis: 
+After patient matching, Kaplan-Meier analysis revealed a significant difference in overall survival between low- and high-grade serous ovarian cancer patients (p = 0.00031). Patients with high-grade tumors showed markedly worse survival outcomes compared to those with low-grade tumors, suggesting that tumor grade is a strong independent prognostic factor in ovarian cancer.
+
+### DeSeq2 Analysis to find biomarkers 
+```{r}
+if (!require("DESeq2", quietly = TRUE))
+BiocManager::install("DESeq2")
+library(DESeq2)
+BiocManager::install("EnhancedVolcano")
+library(EnhancedVolcano)
+```
+# Loading in the summarized experiment data 
+```{r}
+rna_clinical<-rna_se@colData
+rna_clinical<- as.data.frame(rna_clinical)
+rna_genes<- rna_se@rowRanges@elementMetadata
+rna_genes<- as.data.frame(rna_genes)
+rna_counts<- rna_se@assays@data$unstranded
+rna_counts<-as.data.frame(rna_counts)
+```
+
+#Write the summarized experiment data into csv files to allow quicker access for the future 
+
+```{r Exercise 2.5}
+treatment_mask<-ifelse(colnames(rna_clinical)=="treatments",FALSE,TRUE)
+
+primary_mask<-ifelse(colnames(rna_clinical)=="primary_site", FALSE,TRUE)
+
+disease_mask<- ifelse(colnames(rna_clinical)=="disease_type",F,T)
+
+sites_mask<- ifelse(colnames(rna_clinical)=="sites_of_involvement",F,T)
+
+rna_clinical<-rna_clinical[,treatment_mask]
+rna_clinical<-rna_clinical[,primary_mask]
+rna_clinical<-rna_clinical[,disease_mask]
+rna_clinical<-rna_clinical[,sites_mask]
+
+# Create one mask that keeps only the columns NOT in this list
+bad_columns <- c("treatments", "primary_site", "disease_type", "sites_of_involvement")
+
+# Create boolean mask: TRUE for columns to keep
+keep_mask <- !(colnames(rna_clinical) %in% bad_columns)
+
+# Subset once
+rna_clinical <- rna_clinical[, keep_mask]
+
+```
+
+### Write the dataframe into csv files to allow faster access 
+
+```{r}
+write.csv(rna_clinical, "ov_rna_clinical_data.csv", row.names = TRUE)
+write.csv(rna_genes, "ov_rna_gene_data.csv", row.names = FALSE)
+write.csv(rna_counts, "ov_rna_count_data.csv", row.names = TRUE)
+
+rna_clinical <- read.csv("/home1/heclaire/490_cluster/OV_data/ov_rna_clinical_data.csv", row.names = 1)
+rna_genes<-read.csv("/home1/heclaire/490_cluster/OV_data/ov_rna_gene_data.csv")
+rna_counts<-read.csv("/home1/heclaire/490_cluster/OV_data/ov_rna_count_data.csv", row.names = 1)
+
+rownames(rna_genes)<-rna_genes$gene_id
+rownames(rna_counts)<-rownames(rna_genes)
+colnames(rna_counts)<-rownames(rna_clinical)
+```
+
+
+### Data processing and cleaning for DeSeq2 Analysis: 
+```{r}
+clean_rna_clinical<-rna_clinical[!is.na(rna_clinical$tumor_grade),]
+new_rna_clinical<-new_rna_clinical[!is.na(new_rna_clinical$survival_time),]
+clean_count<- rna_counts[ ,!is.na(rna_clinical$tumor_grade)]
+clean_counts<- clean_count[,!is.na(new_rna_clinical$survival_time)]
+less_100_mask<-rowSums(clean_count)>=100
+clean_count<-clean_count[less_100_mask,]
+clean_genes<- rna_genes[less_100_mask,]
+```
+
+### DeSeq2 Analysis
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = clean_count,
+                              colData = clean_rna_clinical,
+                              design= ~grade_bin)
+
+dds_obj <- DESeq(dds)
+
+resultsNames(dds_obj)
+
+results <- results(dds_obj, format = "DataFrame", contrast = c("grade_bin","High Grade","Low Grade"))
+rna_genes <- rna_genes[less_100_mask,]
+results <- data.frame(clean_genes$gene_name, rownames(results),results$log2FoldChange,results$pvalue, results$padj,-log10(results$padj))
+colnames(results) <- c("gene_name","gene_id","log2FoldChange","pval","padj","-log10padj")
+row.names(results)<-results$gene_id
+
+#write.csv(results, "ov_DeSeq2_resutls.csv", row.names = TRUE)
+
+results<-read.csv("/home1/heclaire/490_cluster/OV_data/ov_DeSeq2_resutls.csv")
+```
+
+### Plot the genes identified by the DeSeq analysis using the Volcano Plot: 
+```{r}
+png("volcanoplot.png",width = 1000, height = 500)
+
+
+EnhancedVolcano(results,
+                lab = results$gene_name,
+                x = 'log2FoldChange',
+                y = 'padj',
+                title = 'Tumor Grade: Low Grade vs High Grade',
+                pointSize = 1.0,
+                labSize = 5.0)
+```
+
+Analysis: 
+PAGE2, TKT1, MKRN9P, OVGP1, PYY
+- Upregulated in high-grade (right side, positive fold change)
+
+MYH11
+Downregulated in high grade, and upregualted in low-grade (left side, negative fold change)
+
+```{r}
+new_rna_clinical <- merge(clean_rna_clinical, 
+                          clinic[,c("bcr_patient_barcode","survival_time")],
+                          by.x = "patient", by.y = "bcr_patient_barcode",
+                          all.x = TRUE)
+```
+
+```{r}
+new_rna_clinical <- merge(clean_rna_clinical, 
+                          clinic[,c("Tumor_Sample_Barcode","survival_time")],
+                          by.x = "patient", by.y = "Tumor_Sample_Barcode",
+                          all.x = TRUE)
+```
+
+### Mutational Data: Cooncoplot
+```{r}
+library(ggplot2)
+maf_object@clinical.data$grade_bin<-ifelse(maf_object@clinical.data$tumor_grade=="G3","High Grade","Low Grade")
+maf_object@clinical.data$grade_bin<-factor(maf_object@clinical.data$grade_bin,levels = c("High Grade","Low Grade"))
+no_na_mask<-!is.na(maf_object@clinical.data$grade_bin)
+clean_maf_object<-maf_object@clinical.data[no_na_mask,]
+
+
+high_sample<-clean_maf_object$Tumor_Sample_Barcode[clean_maf_object$grade_bin == "High Grade"]
+low_sample<-clean_maf_object$Tumor_Sample_Barcode[clean_maf_object$grade_bin == "Low Grade"]
+
+high_maf<-subsetMaf(maf = maf_object, tsb = high_sample)
+low_maf <- subsetMaf(maf = maf_object, tsb = low_sample)
+
+```
+
+```{r}
+
+png("cooncoplot.png",width = 2000, height = 1000)
+coOncoplot(m1 = high_maf,
+m2 =low_maf,
+m1Name ="High Grade",
+m2Name = "Low Grade", 
+borderCol = NA)
+
+dev.off()
+#ggsave("home1/heclaire/490_cluster/week6_MAF/co-Oncoplot.png", plot = p, width = 1000, height = 1000, dpi = 1000)
+```
+
+Analysis: 
+Overall, the mutation percentages are close to each other. 
+
+### Summarized experiment: methylation 
+```{r}
+query <- GDCquery(project = "TCGA-OV",
+                  data.category = "DNA Methylation",
+                  data.type = "Methylation Beta Value",
+                  platform = "Illumina Human Methylation 450",
+                  data.format = "Dataframe")
+GDCdownload(query)
+methylation450 <- GDCprepare(query)
+```
+
+
+```{r}
+methylation_clinical <- as.data.frame(methylation450@colData)
+betas <- as.data.frame(methylation450@assays@data@listData)
+cpg_sites <- as.data.frame(methylation450@rowRanges@elementMetadata)
+
+column_mask <- ifelse(colnames(methylation_clinical) %in% c('treatments', 'primary_site', 'disease_type','sites_of_involvement'), F, T)
+
+methylation_clinical <- methylation_clinical[,column_mask]
+write.csv(methylation_clinical, 'ov_methylation_clinical.csv')
+
+
+site_mask <- !grepl('-', cpg_sites$gene) & !grepl(';', cpg_sites$gene) & !is.na(cpg_sites$gene) & complete.cases(betas)
+betas <- betas[site_mask,]
+cpg_sites <- cpg_sites[site_mask,]
+
+write.csv(betas, 'ov_methylation_betas.csv')
+write.csv(cpg_sites, 'ov_cpg_sites.csv')
+```
+
+Read the methylation data: 
+```{r}
+methylation_clinical <- read.csv("/home1/heclaire/490_cluster/OV_data/ov_methylation_clinical.csv", row.names = 1)
+betas <- read.csv("/home1/heclaire/490_cluster/OV_data/ov_methylation_betas.csv", row.names = 1)
+cpg_sites <- read.csv("/home1/heclaire/490_cluster/OV_data/ov_cpg_sites.csv", row.names = 1)
+```
+
+
+(1) Naive Differential Methylation
+```{r}
+library(sesame)
+library(sesameData)
+library(limma)
+
+#masking out NAs
+na_mask <- !is.na(methylation_clinical$tumor_grade)
+methylation_clinical <- methylation_clinical[na_mask,]
+betas_clean <- betas[,na_mask]
+
+methylation_clinical$grade_bin <- ifelse(methylation_clinical$tumor_grade=="G3","High Grade","Low Grade")
+
+#fitting linear models using a "target value"
+low_mask <- methylation_clinical$grade_bin=="Low Grade"
+
+methylation_clinical$tumor_grade <- !low_mask
+
+mval <- t(apply(betas_clean, 1, function(x) log2(x/(1-x)))) 
+#mvalue is another statistic for methylation, centered at 0 and ranges from -1 to 1
+
+design <- model.matrix(~tumor_grade, data = methylation_clinical)
+fit <- lmFit(mval, design)
+fit2 <- eBayes(fit)
+```
+
+```{r}
+#Extracting model into dataframe
+dat <- data.frame(foldchange = fit[["coefficients"]][,2], logPvalue =  -log10(p.adjust(fit2[["p.value"]][,2],method='BY')), geneName = cpg_sites$gene)
+dat$threshold <- as.factor(abs(dat$foldchange) < 1)
+
+#Visualization
+png("Methylation_Volcano_Plot.png")
+cols <- c("TRUE" = "grey", "FALSE" = "blue")
+ggplot(data=dat, aes(x=foldchange, y = logPvalue, color=threshold)) +
+  geom_point(alpha=.2, size=0.6) +
+  scale_colour_manual(values = cols) +
+  geom_vline(xintercept = 1, colour="#990000", linetype="dashed") + 
+  geom_vline(xintercept = - 1, colour="#990000", linetype="dashed") +
+  geom_hline(yintercept = 2, colour = "#990000", linetype="dashed") +
+  theme(legend.position="none") +
+  xlab("Fold Change") +
+  ylab("-log10 p value") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+### Combine methylation and DeSeq2 results 
+
+```{r}
+#you can also try looking at "upregulated" or "hypermethylated" !
+upregulated <- results[(results$log2FoldChange > 1), 'gene_name']
+hypermethylated <- dat[dat$foldchange > 1, 'geneName']
+interest_genes <- intersect(upregulated, hypermethylated)
+interest_genes
+```
+
+
+Analysis: 
+OVGP1 and PAGE2B (similar to PAGE2) are in this list as well as in the upregulated region shown in the volcano plot. 
+
+### Co-lollipop Plot to examine the genes identified
+
+```{r}
+png("colollipop.png")
+lollipopPlot2(m1 = high_maf,
+m2 =low_maf,
+m1_name = "High Grade",
+m2_name = "Low Grade",
+gene ="OVGP1")
+```
+
+### Suvival for Differetially expressed genes found in DeSeq2 Analysis 
+
+### PAGE2
+```{r}
+median_page2 <- median(as.numeric(clean_count[rna_genes$gene_name=="PAGE2",]))
+new_rna_clinical$PAGE2up <- t(clean_count[rna_genes$gene_name=="PAGE2",]>median_page2) #upregulated in high grade
+```
+
+```{r}
+clean_rna_clinical$PAGE2up
+
+new_rna_clinical<-new_rna_clinical[!is.na(new_rna_clinical$survival_time),]
+new_rna_clinical$death_event <- ifelse(new_rna_clinical$vital_status=="Dead",TRUE,FALSE)
+new_rna_clinical$survival_time <- as.numeric(new_rna_clinical$survival_time)
+```
+Run the following code block.
+```{r}
+survival_object <- Surv(time = new_rna_clinical$survival_time,
+                        event = new_rna_clinical$death_event)
+
+fit_object <- survfit(survival_object ~ PAGE2up, data = new_rna_clinical)
+```
+
+
+Run the following code block. The KM plot should appear in the plot tab on the right. Manually expand the tab if you get an error about the plot being too small. 
+```{r}
+png("KM_plot_for_PAGE2.png")
+survplot <- ggsurvplot(fit_object,
+                       pval=TRUE,
+                       ggtheme = theme(plot.margin = unit(c(1,1,1,1), "cm")),
+                       legend = 'right')
+
+KM_plot <- survplot$plot + theme_bw() + theme(axis.title = element_text(size=20), 
+                                              axis.text = element_text(size=16),
+                                              legend.title = element_text(size=14),
+                                              legend.text = element_text(size=12))
+
+KM_plot
+```
+
+
+### TKT1
+```{r}
+median_tkt1 <- median(as.numeric(clean_counts[rna_genes$gene_name=="TKTL1",]))
+new_rna_clinical$TKTL1up <- t(clean_counts[rna_genes$gene_name=="TKTL1",]>median_tkt1) #upregulated in high grade
+```
+Run the following code block.
+```{r}
+survival_object <- Surv(time = new_rna_clinical$survival_time,
+                        event = new_rna_clinical$death_event)
+
+fit_object <- survfit(survival_object ~ TKTL1up, data = new_rna_clinical)
+```
+
+
+Run the following code block. The KM plot should appear in the plot tab on the right. Manually expand the tab if you get an error about the plot being too small. 
+```{r}
+png("KM_plot_for_TKTL1up.png")
+survplot <- ggsurvplot(fit_object,
+                       pval=TRUE,
+                       ggtheme = theme(plot.margin = unit(c(1,1,1,1), "cm")),
+                       legend = 'right')
+
+KM_plot <- survplot$plot + theme_bw() + theme(axis.title = element_text(size=20), 
+                                              axis.text = element_text(size=16),
+                                              legend.title = element_text(size=14),
+                                              legend.text = element_text(size=12))
+
+KM_plot
+```
+
+### MKRN9P
+```{r}
+median_MKRN9P <- median(as.numeric(clean_counts[rna_genes$gene_name=="MKRN9P",]))
+new_rna_clinical$MKRN9Pup <- t(clean_counts[rna_genes$gene_name=="MKRN9P",]>median_MKRN9P) #upregulated in high grade
+```
+Run the following code block.
+```{r}
+survival_object <- Surv(time = new_rna_clinical$survival_time,
+                        event = new_rna_clinical$death_event)
+
+fit_object <- survfit(survival_object ~ MKRN9Pup, data = new_rna_clinical)
+```
+
+
+Run the following code block. The KM plot should appear in the plot tab on the right. Manually expand the tab if you get an error about the plot being too small. 
+```{r}
+png("KM_plot_for_MKRN9Pup.png")
+survplot <- ggsurvplot(fit_object,
+                       pval=TRUE,
+                       ggtheme = theme(plot.margin = unit(c(1,1,1,1), "cm")),
+                       legend = 'right')
+
+KM_plot <- survplot$plot + theme_bw() + theme(axis.title = element_text(size=20), 
+                                              axis.text = element_text(size=16),
+                                              legend.title = element_text(size=14),
+                                              legend.text = element_text(size=12))
+
+KM_plot
+```
+
+### OVGP1
+```{r}
+median_OVGP1 <- median(as.numeric(clean_counts[rna_genes$gene_name=="OVGP1",]))
+new_rna_clinical$OVGP1up <- t(clean_counts[rna_genes$gene_name=="OVGP1",]>median_OVGP1) #upregulated in high grade
+```
+
+Run the following code block.
+```{r}
+survival_object <- Surv(time = new_rna_clinical$survival_time,
+                        event = new_rna_clinical$death_event)
+
+fit_object <- survfit(survival_object ~ OVGP1up, data = new_rna_clinical)
+```
+
+
+Run the following code block. The KM plot should appear in the plot tab on the right. Manually expand the tab if you get an error about the plot being too small. 
+```{r}
+png("KM_plot_for_OVGP1up.png")
+survplot <- ggsurvplot(fit_object,
+                       pval=TRUE,
+                       ggtheme = theme(plot.margin = unit(c(1,1,1,1), "cm")),
+                       legend = 'right')
+
+KM_plot <- survplot$plot + theme_bw() + theme(axis.title = element_text(size=20), 
+                                              axis.text = element_text(size=16),
+                                              legend.title = element_text(size=14),
+                                              legend.text = element_text(size=12))
+
+KM_plot
+```
+
+### 
+```{r}
+median_PYY <- median(as.numeric(clean_counts[rna_genes$gene_name=="PYY",]))
+new_rna_clinical$PYYup <- t(clean_counts[rna_genes$gene_name=="PYY",]>median_PYY) #upregulated in high grade
+```
+
+Run the following code block.
+```{r}
+survival_object <- Surv(time = new_rna_clinical$survival_time,
+                        event = new_rna_clinical$death_event)
+
+fit_object <- survfit(survival_object ~ PYYup, data = new_rna_clinical)
+```
+
+
+Run the following code block. The KM plot should appear in the plot tab on the right. Manually expand the tab if you get an error about the plot being too small. 
+```{r}
+png("KM_plot_for_PYY.png")
+survplot <- ggsurvplot(fit_object,
+                       pval=TRUE,
+                       ggtheme = theme(plot.margin = unit(c(1,1,1,1), "cm")),
+                       legend = 'right')
+
+KM_plot <- survplot$plot + theme_bw() + theme(axis.title = element_text(size=20), 
+                                              axis.text = element_text(size=16),
+                                              legend.title = element_text(size=14),
+                                              legend.text = element_text(size=12))
+
+KM_plot
+```
+
+### MYH11
+```{r}
+median_MYH11 <- median(as.numeric(clean_counts[rna_genes$gene_name=="MYH11",]))
+new_rna_clinical$MYH11down <- t(clean_counts[rna_genes$gene_name=="MYH11",]<median_MYH11) #upregulated in high grade
+```
+Run the following code block.
+```{r}
+survival_object <- Surv(time = new_rna_clinical$survival_time,
+                        event = new_rna_clinical$death_event)
+
+fit_object <- survfit(survival_object ~ MYH11down, data = new_rna_clinical)
+```
+
+
+Run the following code block. The KM plot should appear in the plot tab on the right. Manually expand the tab if you get an error about the plot being too small. 
+```{r}
+png("KM_plot_for_MYH11down.png")
+survplot <- ggsurvplot(fit_object,
+                       pval=TRUE,
+                       ggtheme = theme(plot.margin = unit(c(1,1,1,1), "cm")),
+                       legend = 'right')
+
+KM_plot <- survplot$plot + theme_bw() + theme(axis.title = element_text(size=20), 
+                                              axis.text = element_text(size=16),
+                                              legend.title = element_text(size=14),
+                                              legend.text = element_text(size=12))
+
+KM_plot
+```
+
+#### FGSEA Analysis for the gene set identified by the DeSeq2 analysis 
+```{r}
+install.packages("devtools")
+devtools::install_github("ctlab/fgsea")
+library("fgsea")
+
+matrix_to_list <- function(pws){
+  pws.l <- list()
+  for (pw in colnames(pws)) {
+    pws.l[[pw]] <- rownames(pws)[as.logical(pws[, pw])]
+  }
+  return(pws.l)
+}
+
+foldChange<-results$log2FoldChange
+pval<-results$pval
+geneNames<-results$gene_id
+geneNames_<-results$gene_name
+
+results <- results[!duplicated(results$gene_name),]
+results <- results[!is.na(results$gene_name),]
+
+
+rankings <- sign(foldChange)*(-log10(pval))
+rankings <- sort(rankings, decreasing = TRUE)
+names(rankings) <- geneNames
+
+
+# Function: Adjacency matrix to list -------------------------
+matrix_to_list <- function(pws){
+  pws.l <- list()
+  for (pw in colnames(pws)) {
+    pws.l[[pw]] <- rownames(pws)[as.logical(pws[, pw])]
+  }
+  return(pws.l)
+}
+
+# Get all the genes in your dataset and assign them to my_genes 
+my_genes <- df$gene_symbol
+
+# Download gene sets .gmt files
+#https://www.gsea-msigdb.org/gsea/msigdb/collections.jsp
+# Copy the .gmt file to your folder, in my case, its 'PEA/Background_genes/'
+# Then read in the .gmt file
+gmt <- "h.all.v2024.1.Hs.symbols.gmt"
+hidden <- unique(unlist(gmt))
+  
+# Convert gmt file to a matrix with the genes as rows and for each go annotation (columns) the values are 0 or 1
+mat <- matrix(NA, dimnames = list(hidden, names(gmt)),
+       nrow = length(hidden), ncol = length(gmt))
+for (i in 1:dim(mat)[2]){
+       mat[,i] <- as.numeric(hidden %in% gmt[[i]])
+}
+#Subset to the genes that are present in our data to avoid bias
+hidden1 <- intersect(geneNames, hidden)
+mat <- mat[hidden1, colnames(mat)[which(colSums(mat[hidden1,])>5)]] # filter for gene sets with more than 5 genes annotated
+# And get the list again using the function we previously defined
+final_list <- matrix_to_list(mat)
+
+
+GSEAres <- fgsea(pathways = final_list, # List of gene sets to check
+                 stats = rankings,
+                 scoreType = 'std', # in this case we have both pos and neg rankings. if only pos or neg, set to 'pos', 'neg'
+                 minSize = 10,
+                 maxSize = 500,
+                 nproc = 1) # for parallelisation
+
+write.csv(results$gene_name,"geneList.csv")
+```
