@@ -9,7 +9,9 @@ knitr::opts_knit$set(root.dir = normalizePath("/home1/heclaire/490_cluster/OV_da
 
 #### Segmenting the patients into low grade and high grade tumor 
 ```{r}
-clinic$grade_binary<-ifelse(clinic$tumor_grade=="G3","High Grade","Low Grade")
+clinic$grade_binary <- ifelse(clinic$tumor_grade %in% c("G3", "G4"), "High Grade", "Low Grade")
+table(clinic$grade_binary)
+table(clinic$tumor_grade)
 ```
 
 
@@ -175,6 +177,7 @@ colnames(rna_counts)<-rownames(rna_clinical)
 ### Data processing and cleaning for DeSeq2 Analysis: 
 ```{r}
 clean_rna_clinical<-rna_clinical[!is.na(rna_clinical$tumor_grade),]
+clean_rna_clinical$grade_bin<-ifelse(clean_rna_clinical$tumor_grade%in% c("G3", "G4"), "High Grade", "Low Grade")
 new_rna_clinical<-new_rna_clinical[!is.na(new_rna_clinical$survival_time),]
 clean_count<- rna_counts[ ,!is.na(rna_clinical$tumor_grade)]
 clean_counts<- clean_count[,!is.na(new_rna_clinical$survival_time)]
@@ -232,17 +235,12 @@ new_rna_clinical <- merge(clean_rna_clinical,
                           all.x = TRUE)
 ```
 
-```{r}
-new_rna_clinical <- merge(clean_rna_clinical, 
-                          clinic[,c("Tumor_Sample_Barcode","survival_time")],
-                          by.x = "patient", by.y = "Tumor_Sample_Barcode",
-                          all.x = TRUE)
-```
+
 
 ### Mutational Data: Cooncoplot
 ```{r}
 library(ggplot2)
-maf_object@clinical.data$grade_bin<-ifelse(maf_object@clinical.data$tumor_grade=="G3","High Grade","Low Grade")
+maf_object@clinical.data$grade_bin<-ifelse(maf_object@clinical.data$tumor_grade %in% c("G3", "G4"), "High Grade", "Low Grade")
 maf_object@clinical.data$grade_bin<-factor(maf_object@clinical.data$grade_bin,levels = c("High Grade","Low Grade"))
 no_na_mask<-!is.na(maf_object@clinical.data$grade_bin)
 clean_maf_object<-maf_object@clinical.data[no_na_mask,]
@@ -322,7 +320,7 @@ na_mask <- !is.na(methylation_clinical$tumor_grade)
 methylation_clinical <- methylation_clinical[na_mask,]
 betas_clean <- betas[,na_mask]
 
-methylation_clinical$grade_bin <- ifelse(methylation_clinical$tumor_grade=="G3","High Grade","Low Grade")
+methylation_clinical$grade_bin <- ifelse(methylation_clinical$tumor_grade%in% c("G3", "G4"), "High Grade", "Low Grade")
 
 #fitting linear models using a "target value"
 low_mask <- methylation_clinical$grade_bin=="Low Grade"
